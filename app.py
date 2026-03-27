@@ -43,7 +43,10 @@ drawdown = (prezzi - rolling_max) / rolling_max
 max_dd = drawdown.min()
 
 # rendimento breve
-var_1m = (prezzi.iloc[-1] - prezzi.iloc[-22]) / prezzi.iloc[-22]
+if len(prezzi) > 22:
+    var_1m = (prezzi.iloc[-1] - prezzi.iloc[-22]) / prezzi.iloc[-22]
+else:
+    var_1m = 0
 
 # =========================
 # SEGNALE MACRO
@@ -79,7 +82,70 @@ portafoglio_finanziario = azionario + obbligazionario + oro + commodities
 totale = portafoglio_finanziario + immobili_valore + liquidita
 
 # =========================
-# UI - METRICHE
+# RISERVA STRATEGICA %
+# =========================
+st.subheader("💣 Riserva Strategica")
+
+percentuale_riserva = st.sidebar.slider("Riserva %", 10, 30, 20)
+
+capitale_investibile = portafoglio_finanziario + liquidita
+riserva_target = capitale_investibile * percentuale_riserva / 100
+
+st.metric("Riserva target", f"{round(riserva_target)} €")
+
+if liquidita < riserva_target:
+    st.warning("⚠️ Riserva da costruire")
+else:
+    st.success("✔️ Riserva pronta")
+
+# =========================
+# INTEGRAZIONE PAC + RISERVA
+# =========================
+st.subheader("🔄 Allocazione Flusso Mensile")
+
+flusso = st.sidebar.number_input("Capitale mensile disponibile", value=1000)
+
+allocazione_flusso = {
+    "CRISI": (1.0, 0.0),
+    "STRESS": (0.8, 0.2),
+    "OPPORTUNITÀ": (0.7, 0.3),
+    "NORMALE": (0.6, 0.4),
+    "ECCESSO": (0.3, 0.7)
+}
+
+pac_perc, riserva_perc = allocazione_flusso[regime]
+
+pac_mensile = flusso * pac_perc
+riserva_mensile = flusso * riserva_perc
+
+st.metric("PAC mensile effettivo", f"{round(pac_mensile)} €")
+st.metric("Accantonamento riserva", f"{round(riserva_mensile)} €")
+
+# =========================
+# UTILIZZO RISERVA
+# =========================
+st.subheader("⚡ Utilizzo Strategico Riserva")
+
+if regime == "CRISI":
+    uso = riserva_target * 0.5
+    st.error(f"🚨 Usa fino a {round(uso)} € della riserva")
+
+elif regime == "STRESS":
+    uso = riserva_target * 0.25
+    st.warning(f"👉 Usa circa {round(uso)} €")
+
+elif regime == "OPPORTUNITÀ":
+    uso = riserva_target * 0.10
+    st.info(f"👉 Uso leggero: {round(uso)} €")
+
+elif regime == "ECCESSO":
+    st.success("👉 NON investire: costruisci riserva")
+
+else:
+    st.info("👉 Mantieni strategia standard")
+
+# =========================
+# UI - MERCATO
 # =========================
 st.subheader("📊 Stato Mercato")
 
@@ -90,10 +156,10 @@ c3.metric("Regime", regime)
 
 st.subheader("💰 Strategia")
 
-st.metric("PAC consigliato", f"{round(pac)} €")
+st.metric("PAC teorico (base)", f"{round(pac)} €")
 
 if regime == "CRISI":
-    st.error("🚨 MASSIMO PANICO → INVESTI FORTE (anche lump sum)")
+    st.error("🚨 MASSIMO PANICO → INVESTI FORTE")
 elif regime == "STRESS":
     st.warning("🔥 Mercato in stress → aumenta esposizione")
 elif regime == "OPPORTUNITÀ":
@@ -132,7 +198,7 @@ df = pd.DataFrame({
 st.bar_chart(df.set_index("Asset"))
 
 # =========================
-# SIMULATORE MILIONE
+# SIMULATORE
 # =========================
 st.subheader("🚀 Simulatore verso 1M €")
 
@@ -143,7 +209,7 @@ capitale = portafoglio_finanziario
 storico = []
 
 for i in range(anni * 12):
-    capitale = capitale * (1 + rendimento/100/12) + pac
+    capitale = capitale * (1 + rendimento/100/12) + pac_mensile
     storico.append(capitale)
 
 st.line_chart(storico)
@@ -156,12 +222,10 @@ st.metric("Valore finale stimato", f"{round(capitale)} €")
 st.subheader("🧠 Decision Engine")
 
 if regime in ["CRISI", "STRESS"]:
-    st.success("👉 AZIONE: investi liquidità progressivamente")
-    if liquidita > 10000:
-        st.write("Suggerito: investire 5k - 10k subito")
+    st.success("👉 AZIONE: investi progressivamente + usa riserva")
 
 if regime == "ECCESSO":
-    st.warning("👉 AZIONE: accumula liquidità")
+    st.warning("👉 AZIONE: accumula riserva")
 
 if max_dd < -0.25:
     st.success("👉 Zona storicamente ottima per entrare")
