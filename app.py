@@ -1,55 +1,82 @@
+import math
+import numpy as np
+import pandas as pd
 import streamlit as st
 import yfinance as yf
-import pandas as pd
-import numpy as np
 
 st.set_page_config(page_title="Hedge Fund Dashboard Luca", layout="wide")
 
 st.title("🏦 Hedge Fund Dashboard - Luca")
 
 # =========================
-# INPUT PATRIMONIO
+# CONFIG ETF
 # =========================
-st.sidebar.header("💼 Patrimonio")
-
-azionario = st.sidebar.number_input("ETF Azionario", value=25000)
-obbligazionario = st.sidebar.number_input("ETF Obbligazionario", value=8000)
-oro = st.sidebar.number_input("Oro", value=2000)
-commodities = st.sidebar.number_input("Commodities", value=2000)
-
-immobili_valore = st.sidebar.number_input("Valore Immobili", value=300000)
-immobili_rendita = st.sidebar.number_input("Rendita Mensile Immobili", value=870)
-
-liquidita = st.sidebar.number_input("Liquidità", value=30000)
-
-PAC_BASE = st.sidebar.number_input("PAC base", value=1000)
+ETF_CONFIG = {
+    "SWDA": {"nome": "MSCI World", "isin": "IE00B4L5Y983", "target": 0.50, "ticker": "SWDA.L"},
+    "EIMI": {"nome": "Emerging Markets", "isin": "IE00BKM4GZ66", "target": 0.12, "ticker": "EIMI.L"},
+    "WSML": {"nome": "World Small Cap", "isin": "IE00BF4RFH31", "target": 0.08, "ticker": "WSML.L"},
+    "AGGH": {"nome": "Global Aggregate Bond", "isin": "IE00BDBRDM35", "target": 0.12, "ticker": "AGGH.L"},
+    "IBGS": {"nome": "Gov Bond 1-3yr", "isin": "IE00B14X4Q57", "target": 0.08, "ticker": "IBGS.L"},
+    "SGLD": {"nome": "Gold", "isin": "IE00B579F325", "target": 0.07, "ticker": "SGLD.L"},
+    "CMOD": {"nome": "Commodities", "isin": "IE00BD6FTQ80", "target": 0.03, "ticker": "CMOD.L"},
+}
 
 # =========================
-# DATI MERCATO
+# FUNZIONI
 # =========================
+def euro(x):
+    return f"{x:,.0f} €".replace(",", ".")
+
 @st.cache_data(ttl=3600)
-def get_data():
+def get_prices():
+    prezzi = {}
+    for etf, cfg in ETF_CONFIG.items():
+        try:
+            data = yf.Ticker(cfg["ticker"]).history(period="5d")
+            prezzi[etf] = float(data["Close"].iloc[-1])
+        except:
+            prezzi[etf] = 0
+    return prezzi
+
+@st.cache_data(ttl=3600)
+def get_market():
     return yf.Ticker("^GSPC").history(period="1y")
 
-data = get_data()
-prezzi = data["Close"]
+# =========================
+# INPUT
+# =========================
+st.sidebar.header("💰 PAC")
+pac_base = st.sidebar.number_input("PAC base", value=1000)
 
-returns = prezzi.pct_change()
+st.sidebar.header("💼 Liquidità")
+liquidita = st.sidebar.number_input("Liquidità", value=30000)
 
-# metriche
-vol = returns.std() * np.sqrt(252)
-rolling_max = prezzi.cummax()
-drawdown = (prezzi - rolling_max) / rolling_max
-max_dd = drawdown.min()
+st.sidebar.header("🛡️ Riserva %")
+perc_riserva = st.sidebar.slider("Riserva %", 5, 30, 20)
 
-# rendimento breve
-if len(prezzi) > 22:
-    var_1m = (prezzi.iloc[-1] - prezzi.iloc[-22]) / prezzi.iloc[-22]
-else:
-    var_1m = 0
+st.sidebar.header("📊 ETF Valori")
+
+valori = {}
+for etf in ETF_CONFIG:
+    valori[etf] = st.sidebar.number_input(f"{etf}", value=5000)
 
 # =========================
-# SEGNALE MACRO
+# DATI
+# =========================
+prezzi = get_prices()
+market = get_market()
+
+returns = market["Close"].pct_change()
+vol = returns.std() * np.sqrt(252)
+
+rolling_max = market["Close"].cummax()
+drawdown = (market["Close"] - rolling_max) / rolling_max
+max_dd = drawdown.min()
+
+var_1m = (market["Close"].iloc[-1] - market["Close"].iloc[-22]) / market["Close"].iloc[-22]
+
+# =========================
+# REGIME
 # =========================
 if max_dd < -0.30:
     regime = "CRISI"
@@ -62,9 +89,6 @@ elif var_1m > 0.12:
 else:
     regime = "NORMALE"
 
-# =========================
-# PAC DINAMICO
-# =========================
 mult = {
     "CRISI": 2.0,
     "STRESS": 1.6,
@@ -73,165 +97,110 @@ mult = {
     "ECCESSO": 0.6
 }
 
-pac = PAC_BASE * mult[regime]
+pac = pac_base * mult[regime]
 
 # =========================
-# PATRIMONIO
+# RISERVA
 # =========================
-portafoglio_finanziario = azionario + obbligazionario + oro + commodities
-totale = portafoglio_finanziario + immobili_valore + liquidita
+tot_etf = sum(valori.values())
+capitale = tot_etf + liquidita
 
-# =========================
-# RISERVA STRATEGICA %
-# =========================
-st.subheader("💣 Riserva Strategica")
-
-percentuale_riserva = st.sidebar.slider("Riserva %", 10, 30, 20)
-
-capitale_investibile = portafoglio_finanziario + liquidita
-riserva_target = capitale_investibile * percentuale_riserva / 100
-
-st.metric("Riserva target", f"{round(riserva_target)} €")
-
-if liquidita < riserva_target:
-    st.warning("⚠️ Riserva da costruire")
-else:
-    st.success("✔️ Riserva pronta")
-
-# =========================
-# INTEGRAZIONE PAC + RISERVA
-# =========================
-st.subheader("🔄 Allocazione Flusso Mensile")
-
-flusso = st.sidebar.number_input("Capitale mensile disponibile", value=1000)
-
-allocazione_flusso = {
-    "CRISI": (1.0, 0.0),
-    "STRESS": (0.8, 0.2),
-    "OPPORTUNITÀ": (0.7, 0.3),
-    "NORMALE": (0.6, 0.4),
-    "ECCESSO": (0.3, 0.7)
-}
-
-pac_perc, riserva_perc = allocazione_flusso[regime]
-
-pac_mensile = flusso * pac_perc
-riserva_mensile = flusso * riserva_perc
-
-st.metric("PAC mensile effettivo", f"{round(pac_mensile)} €")
-st.metric("Accantonamento riserva", f"{round(riserva_mensile)} €")
-
-# =========================
-# UTILIZZO RISERVA
-# =========================
-st.subheader("⚡ Utilizzo Strategico Riserva")
+riserva_target = capitale * perc_riserva / 100
 
 if regime == "CRISI":
-    uso = riserva_target * 0.5
-    st.error(f"🚨 Usa fino a {round(uso)} € della riserva")
-
+    uso_riserva = riserva_target * 0.5
 elif regime == "STRESS":
-    uso = riserva_target * 0.25
-    st.warning(f"👉 Usa circa {round(uso)} €")
-
+    uso_riserva = riserva_target * 0.25
 elif regime == "OPPORTUNITÀ":
-    uso = riserva_target * 0.10
-    st.info(f"👉 Uso leggero: {round(uso)} €")
-
-elif regime == "ECCESSO":
-    st.success("👉 NON investire: costruisci riserva")
-
+    uso_riserva = riserva_target * 0.1
 else:
-    st.info("👉 Mantieni strategia standard")
+    uso_riserva = 0
+
+uso_riserva = min(uso_riserva, liquidita)
 
 # =========================
-# UI - MERCATO
+# METRICHE
 # =========================
-st.subheader("📊 Stato Mercato")
+st.subheader("📊 Mercato")
 
 c1, c2, c3 = st.columns(3)
-c1.metric("Volatilità", f"{round(vol*100,2)}%")
-c2.metric("Max Drawdown", f"{round(max_dd*100,2)}%")
+c1.metric("Vol", f"{vol*100:.2f}%")
+c2.metric("Drawdown", f"{max_dd*100:.2f}%")
 c3.metric("Regime", regime)
 
-st.subheader("💰 Strategia")
+# =========================
+# ETF ANALISI
+# =========================
+righe = []
+sottopesati = {}
 
-st.metric("PAC teorico (base)", f"{round(pac)} €")
+for etf, cfg in ETF_CONFIG.items():
+    val = valori[etf]
+    peso = val / tot_etf
+    target = cfg["target"]
+    diff = peso - target
 
-if regime == "CRISI":
-    st.error("🚨 MASSIMO PANICO → INVESTI FORTE")
-elif regime == "STRESS":
-    st.warning("🔥 Mercato in stress → aumenta esposizione")
-elif regime == "OPPORTUNITÀ":
-    st.info("📥 Fase di accumulo")
-elif regime == "ECCESSO":
-    st.warning("⚠️ Mercato caro → rallenta")
-else:
-    st.success("✔️ Normale")
+    if diff < 0:
+        sottopesati[etf] = abs(diff)
+
+    righe.append({
+        "ETF": etf,
+        "ISIN": cfg["isin"],
+        "Prezzo": round(prezzi[etf], 2),
+        "Target %": target*100,
+        "Attuale %": peso*100,
+        "Scostamento %": diff*100
+    })
+
+df = pd.DataFrame(righe)
 
 # =========================
-# PATRIMONIO
+# COLORI
 # =========================
-st.subheader("🏦 Patrimonio Totale")
+def color(row):
+    if row["Scostamento %"] < -2:
+        return ["background-color: #2ecc71"]*len(row)  # verde
+    elif row["Scostamento %"] > 2:
+        return ["background-color: #e74c3c"]*len(row)  # rosso
+    else:
+        return [""]*len(row)
 
-c1, c2, c3 = st.columns(3)
-c1.metric("Totale", f"{round(totale)} €")
-c2.metric("Finanziario", f"{round(portafoglio_finanziario)} €")
-c3.metric("Rendita immobili annua", f"{round(immobili_rendita*12)} €")
+st.subheader("📊 Stato ETF")
 
-# =========================
-# ALLOCAZIONE
-# =========================
-st.subheader("📊 Allocazione Globale")
-
-alloc_tot = {
-    "ETF": portafoglio_finanziario / totale,
-    "Immobili": immobili_valore / totale,
-    "Liquidità": liquidita / totale
-}
-
-df = pd.DataFrame({
-    "Asset": list(alloc_tot.keys()),
-    "Peso": list(alloc_tot.values())
-})
-
-st.bar_chart(df.set_index("Asset"))
+st.dataframe(df.style.apply(color, axis=1), use_container_width=True)
 
 # =========================
-# SIMULATORE
+# PRIORITÀ ACQUISTI
 # =========================
-st.subheader("🚀 Simulatore verso 1M €")
+budget = pac + uso_riserva
 
-anni = st.slider("Orizzonte anni", 5, 25, 15)
-rendimento = st.slider("Rendimento atteso %", 3, 10, 6)
+st.subheader("💰 Budget")
+st.metric("Totale investibile", euro(budget))
 
-capitale = portafoglio_finanziario
-storico = []
+# ordina per sottopeso maggiore
+sorted_etf = sorted(sottopesati.items(), key=lambda x: x[1], reverse=True)
 
-for i in range(anni * 12):
-    capitale = capitale * (1 + rendimento/100/12) + pac_mensile
-    storico.append(capitale)
+st.subheader("🛒 Piano acquisti PRIORITARIO")
 
-st.line_chart(storico)
+tot_gap = sum(sottopesati.values())
 
-st.metric("Valore finale stimato", f"{round(capitale)} €")
+for etf, gap in sorted_etf:
+    quota = gap / tot_gap
+    euro_alloc = budget * quota
+    prezzo = prezzi[etf]
 
-# =========================
-# DECISION ENGINE
-# =========================
-st.subheader("🧠 Decision Engine")
+    if prezzo > 0:
+        quote = int(euro_alloc / prezzo)
+    else:
+        quote = 0
 
-if regime in ["CRISI", "STRESS"]:
-    st.success("👉 AZIONE: investi progressivamente + usa riserva")
-
-if regime == "ECCESSO":
-    st.warning("👉 AZIONE: accumula riserva")
-
-if max_dd < -0.25:
-    st.success("👉 Zona storicamente ottima per entrare")
+    if quote > 0:
+        st.success(f"{etf} → PRIORITÀ ALTA | {quote} quote | {round(euro_alloc)}€")
+    else:
+        st.info(f"{etf} → accumula budget")
 
 # =========================
-# GRAFICO MERCATO
+# GRAFICO
 # =========================
 st.subheader("📉 S&P500")
-st.line_chart(prezzi)
+st.line_chart(market["Close"])
