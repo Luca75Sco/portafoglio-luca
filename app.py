@@ -26,9 +26,17 @@ target = {
     "Commodities": 0.05
 }
 
-sp500 = yf.Ticker("^GSPC")
-data = sp500.history(period="3mo")
-var = (data["Close"].iloc[-1] - data["Close"].iloc[-22]) / data["Close"].iloc[-22]
+try:
+    sp500 = yf.Ticker("^GSPC")
+    data = sp500.history(period="3mo")
+
+    if len(data) > 22:
+        var = (data["Close"].iloc[-1] - data["Close"].iloc[-22]) / data["Close"].iloc[-22]
+    else:
+        var = 0
+
+except:
+    var = 0.iloc[-22]
 
 if var < -0.25:
     segnale = "CRASH"
