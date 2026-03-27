@@ -1,184 +1,173 @@
 import streamlit as st
 import yfinance as yf
 import pandas as pd
+import numpy as np
 
-st.set_page_config(page_title="Portafoglio Hedge Luca PRO", layout="wide")
+st.set_page_config(page_title="Hedge Fund Dashboard Luca", layout="wide")
 
-st.title("📊 Dashboard Portafoglio PRO")
+st.title("🏦 Hedge Fund Dashboard - Luca")
 
 # =========================
-# SIDEBAR
+# INPUT PATRIMONIO
 # =========================
-st.sidebar.header("Valori Portafoglio")
+st.sidebar.header("💼 Patrimonio")
 
-azionario = st.sidebar.number_input("Azionario", value=25000)
-obbligazionario = st.sidebar.number_input("Obbligazionario", value=8000)
+azionario = st.sidebar.number_input("ETF Azionario", value=25000)
+obbligazionario = st.sidebar.number_input("ETF Obbligazionario", value=8000)
 oro = st.sidebar.number_input("Oro", value=2000)
 commodities = st.sidebar.number_input("Commodities", value=2000)
 
-valori = {
-    "Azionario": azionario,
-    "Obbligazionario": obbligazionario,
-    "Oro": oro,
-    "Commodities": commodities
-}
+immobili_valore = st.sidebar.number_input("Valore Immobili", value=300000)
+immobili_rendita = st.sidebar.number_input("Rendita Mensile Immobili", value=870)
 
-target = {
-    "Azionario": 0.70,
-    "Obbligazionario": 0.20,
-    "Oro": 0.05,
-    "Commodities": 0.05
-}
+liquidita = st.sidebar.number_input("Liquidità", value=30000)
+
+PAC_BASE = st.sidebar.number_input("PAC base", value=1000)
 
 # =========================
-# DATI MERCATO (CACHED)
+# DATI MERCATO
 # =========================
 @st.cache_data(ttl=3600)
 def get_data():
-    sp500 = yf.Ticker("^GSPC")
-    data = sp500.history(period="6mo")
-    return data
+    return yf.Ticker("^GSPC").history(period="1y")
 
-try:
-    data = get_data()
+data = get_data()
+prezzi = data["Close"]
 
-    if not data.empty:
-        prezzi = data["Close"]
+returns = prezzi.pct_change()
 
-        # rendimento 1 mese (~22 giorni)
-        if len(prezzi) > 22:
-            var_1m = (prezzi.iloc[-1] - prezzi.iloc[-22]) / prezzi.iloc[-22]
-        else:
-            var_1m = 0
+# metriche
+vol = returns.std() * np.sqrt(252)
+rolling_max = prezzi.cummax()
+drawdown = (prezzi - rolling_max) / rolling_max
+max_dd = drawdown.min()
 
-        # volatilità
-        returns = prezzi.pct_change()
-        vol = returns.std() * (252 ** 0.5)
-
-        # drawdown
-        rolling_max = prezzi.cummax()
-        drawdown = (prezzi - rolling_max) / rolling_max
-        max_dd = drawdown.min()
-
-    else:
-        var_1m = 0
-        vol = 0
-        max_dd = 0
-
-except Exception as e:
-    st.warning(f"Errore dati mercato: {e}")
-    var_1m = 0
-    vol = 0
-    max_dd = 0
+# rendimento breve
+var_1m = (prezzi.iloc[-1] - prezzi.iloc[-22]) / prezzi.iloc[-22]
 
 # =========================
-# SEGNALE INTELLIGENTE
+# SEGNALE MACRO
 # =========================
-if var_1m < -0.20 or max_dd < -0.25:
-    segnale = "CRASH"
+if max_dd < -0.30:
+    regime = "CRISI"
+elif max_dd < -0.20:
+    regime = "STRESS"
 elif var_1m < -0.10:
-    segnale = "AGGRESSIVO"
-elif var_1m < -0.03:
-    segnale = "ACCUMULO"
-elif var_1m > 0.10:
-    segnale = "PRUDENTE"
+    regime = "OPPORTUNITÀ"
+elif var_1m > 0.12:
+    regime = "ECCESSO"
 else:
-    segnale = "NEUTRO"
+    regime = "NORMALE"
 
 # =========================
 # PAC DINAMICO
 # =========================
-PAC_BASE = 1000
-
-moltiplicatori = {
-    "CRASH": 1.8,
-    "AGGRESSIVO": 1.5,
-    "ACCUMULO": 1.2,
-    "NEUTRO": 1.0,
-    "PRUDENTE": 0.7
+mult = {
+    "CRISI": 2.0,
+    "STRESS": 1.6,
+    "OPPORTUNITÀ": 1.3,
+    "NORMALE": 1.0,
+    "ECCESSO": 0.6
 }
 
-pac = PAC_BASE * moltiplicatori[segnale]
+pac = PAC_BASE * mult[regime]
+
+# =========================
+# PATRIMONIO
+# =========================
+portafoglio_finanziario = azionario + obbligazionario + oro + commodities
+totale = portafoglio_finanziario + immobili_valore + liquidita
+
+# =========================
+# UI - METRICHE
+# =========================
+st.subheader("📊 Stato Mercato")
+
+c1, c2, c3 = st.columns(3)
+c1.metric("Volatilità", f"{round(vol*100,2)}%")
+c2.metric("Max Drawdown", f"{round(max_dd*100,2)}%")
+c3.metric("Regime", regime)
+
+st.subheader("💰 Strategia")
+
+st.metric("PAC consigliato", f"{round(pac)} €")
+
+if regime == "CRISI":
+    st.error("🚨 MASSIMO PANICO → INVESTI FORTE (anche lump sum)")
+elif regime == "STRESS":
+    st.warning("🔥 Mercato in stress → aumenta esposizione")
+elif regime == "OPPORTUNITÀ":
+    st.info("📥 Fase di accumulo")
+elif regime == "ECCESSO":
+    st.warning("⚠️ Mercato caro → rallenta")
+else:
+    st.success("✔️ Normale")
+
+# =========================
+# PATRIMONIO
+# =========================
+st.subheader("🏦 Patrimonio Totale")
+
+c1, c2, c3 = st.columns(3)
+c1.metric("Totale", f"{round(totale)} €")
+c2.metric("Finanziario", f"{round(portafoglio_finanziario)} €")
+c3.metric("Rendita immobili annua", f"{round(immobili_rendita*12)} €")
 
 # =========================
 # ALLOCAZIONE
 # =========================
-tot = sum(valori.values())
-alloc = {k: v/tot for k,v in valori.items()}
+st.subheader("📊 Allocazione Globale")
 
-# =========================
-# UI - MERCATO
-# =========================
-st.subheader("📈 Stato Mercato")
+alloc_tot = {
+    "ETF": portafoglio_finanziario / totale,
+    "Immobili": immobili_valore / totale,
+    "Liquidità": liquidita / totale
+}
 
-col1, col2, col3 = st.columns(3)
-
-col1.metric("S&P500 1M", f"{round(var_1m*100,2)}%")
-col2.metric("Volatilità", f"{round(vol*100,2)}%")
-col3.metric("Max Drawdown", f"{round(max_dd*100,2)}%")
-
-st.metric("Segnale", segnale)
-
-# =========================
-# GRAFICO
-# =========================
-st.subheader("📊 S&P500 Trend")
-st.line_chart(data["Close"])
-
-# =========================
-# STRATEGIA
-# =========================
-st.subheader("💰 Strategia Dinamica")
-
-st.metric("PAC suggerito", f"{round(pac)} €")
-
-if segnale == "CRASH":
-    st.error("🚨 MERCATO IN PANICO → ENTRA FORTE")
-elif segnale == "AGGRESSIVO":
-    st.warning("🔥 Opportunità forte")
-elif segnale == "ACCUMULO":
-    st.info("📥 Accumulo intelligente")
-elif segnale == "PRUDENTE":
-    st.warning("⚠️ Mercato tirato → riduci ingressi")
-else:
-    st.success("😐 Situazione neutra")
-
-# =========================
-# ALLOCAZIONE VISIVA
-# =========================
-st.subheader("📊 Allocazione Attuale")
-df_alloc = pd.DataFrame({
-    "Asset": list(alloc.keys()),
-    "Percentuale": list(alloc.values())
+df = pd.DataFrame({
+    "Asset": list(alloc_tot.keys()),
+    "Peso": list(alloc_tot.values())
 })
-st.bar_chart(df_alloc.set_index("Asset"))
+
+st.bar_chart(df.set_index("Asset"))
 
 # =========================
-# RIBILANCIAMENTO
+# SIMULATORE MILIONE
 # =========================
-st.subheader("⚖️ Ribilanciamento Intelligente")
+st.subheader("🚀 Simulatore verso 1M €")
 
-for asset in target:
-    diff = alloc[asset] - target[asset]
+anni = st.slider("Orizzonte anni", 5, 25, 15)
+rendimento = st.slider("Rendimento atteso %", 3, 10, 6)
 
-    if abs(diff) > 0.05:
-        if diff > 0:
-            st.error(f"🔻 VENDI {asset} ({round(diff*100,2)}%)")
-        else:
-            st.success(f"🟢 COMPRA {asset} ({round(abs(diff)*100,2)}%)")
-    else:
-        st.info(f"{asset}: OK")
+capitale = portafoglio_finanziario
+storico = []
+
+for i in range(anni * 12):
+    capitale = capitale * (1 + rendimento/100/12) + pac
+    storico.append(capitale)
+
+st.line_chart(storico)
+
+st.metric("Valore finale stimato", f"{round(capitale)} €")
 
 # =========================
-# BONUS PRO
+# DECISION ENGINE
 # =========================
-st.subheader("🧠 Insight PRO")
+st.subheader("🧠 Decision Engine")
 
-if vol > 0.25:
-    st.warning("Mercato molto volatile → opportunità ma rischio alto")
+if regime in ["CRISI", "STRESS"]:
+    st.success("👉 AZIONE: investi liquidità progressivamente")
+    if liquidita > 10000:
+        st.write("Suggerito: investire 5k - 10k subito")
 
-if max_dd < -0.20:
-    st.success("Storicamente queste zone sono ottime per accumulo")
+if regime == "ECCESSO":
+    st.warning("👉 AZIONE: accumula liquidità")
 
-if var_1m > 0.15:
-    st.warning("Possibile eccesso → attenzione a correzioni")
+if max_dd < -0.25:
+    st.success("👉 Zona storicamente ottima per entrare")
+
+# =========================
+# GRAFICO MERCATO
+# =========================
+st.subheader("📉 S&P500")
+st.line_chart(prezzi)
